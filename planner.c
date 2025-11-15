@@ -30,6 +30,7 @@
 #include "nuts_bolts.h"
 #include "planner.h"
 #include "protocol.h"
+#include "gcode.h" 
 
 #ifndef ROTARY_FIX
 #define ROTARY_FIX 0
@@ -425,6 +426,9 @@ bool plan_buffer_line (float *target, plan_line_data_t *pl_data)
     block->output_commands = pl_data->output_commands;
     block->message = pl_data->message;
     memcpy(block->target_mm, target, sizeof(float) * N_AXIS);
+
+   // Memorizza il tipo di movimento originale
+    block->original_motion_mode = gc_state.modal.motion;
 
     // Copy position data based on type of motion being planned.
     memcpy(position_steps, block->condition.system_motion ? sys.position : pl.position, sizeof(position_steps));

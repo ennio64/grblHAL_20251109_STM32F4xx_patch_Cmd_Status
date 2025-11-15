@@ -21,6 +21,8 @@
   along with grblHAL. If not, see <http://www.gnu.org/licenses/>.
 */
 
+#include "gcode.h"  // Per motion_mode_t
+
 #ifndef _PLANNER_H_
 #define _PLANNER_H_
 
@@ -83,6 +85,7 @@ typedef struct plan_block {
     planner_cond_t condition;       // Block bitfield variable defining block run conditions. Copied from pl_line_data.
     int32_t line_number;            // Block line number for real-time reporting. Copied from pl_line_data.
     float target_mm[N_AXIS];        // Block target end location in mm for real-time reporting of distance to go.
+    motion_mode_t original_motion_mode; // Memorizza il tipo di movimento originale
 
     // Fields used by the motion planner to manage acceleration. Some of these values may be updated
     // by the stepper module during execution of special motion cases for replanning purposes.

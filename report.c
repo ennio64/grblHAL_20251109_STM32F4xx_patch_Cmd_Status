@@ -40,6 +40,9 @@
 #include "state_machine.h"
 #include "canbus.h"
 #include "regex.h"
+#include "gcode.h"
+
+#include <stdio.h>
 
 #if ENABLE_SPINDLE_LINEARIZATION
 #include <stdio.h>
@@ -49,6 +52,7 @@ static char buf[(STRLEN_COORDVALUE + 1) * N_AXIS];
 static char *(*get_axis_values)(float *axis_values);
 static char *(*get_axis_value)(float value);
 static char *(*get_rate_value)(float value);
+static char current_gcode[4] = "G0"; // Comando G-code corrente
 static uint8_t override_counter = 0; // Tracks when to add override data to status reports.
 static uint8_t wco_counter = 0;      // Tracks when to add work coordinate offset data to status reports.
 static const char vbar[2] = { '|', '\0' };
@@ -197,6 +201,13 @@ inline static char *control_signals_tostring (char *buf, control_signals_t signa
     *buf = '\0';
 
     return buf;
+}
+
+// +++ AGGIUNTA: Funzione per impostare il G-code corrente +++
+void report_set_current_gcode(const char *gcode) {
+    if (gcode && strlen(gcode) < sizeof(current_gcode)) {
+        strcpy(current_gcode, gcode);
+    }
 }
 
 void report_init (void)
@@ -695,6 +706,14 @@ static inline bool is_g92_active (void)
 // Print current gcode parser mode state
 void report_gcode_modes (void)
 {
+    // +++ AGGIUNTA: Update current G-code command +++
+    if (gc_state.modal.motion >= MotionMode_ProbeToward) {
+        strcpy(current_gcode, "G38");
+    } else {
+        strcpy(current_gcode, "G");
+        strcat(current_gcode, uitoa((uint32_t)gc_state.modal.motion));
+    }
+    // +++ FINE AGGIUNTA +++
     hal.stream.write("[GC:G");
     if (gc_state.modal.motion >= MotionMode_ProbeToward) {
         hal.stream.write("38.");
@@ -1147,6 +1166,8 @@ static bool report_spindle_num (spindle_info_t *spindle, void *data)
  // specific needs, but the desired real-time data report must be as short as possible. This is
  // requires as it minimizes the computational overhead and allows grblHAL to keep running smoothly,
  // especially during g-code programs with fast, short line segments and high frequency reports (5-20Hz).
+
+// +++ AGGIUNTA: Report current G-code command +++
 void report_realtime_status (stream_write_ptr stream_write)
 {
     static bool probing = false;
@@ -1246,6 +1267,194 @@ void report_realtime_status (stream_write_ptr stream_write)
     stream_write(settings.status_report.machine_position ? "|MPos:" : "|WPos:");
     stream_write(get_axis_values(print_position));
 
+     // Returns planner and output stream buffer states.
+    if(settings.status_report.buffer_state) {
+        stream_write("|Bf:");
+        stream_write(uitoa((uint32_t)plan_get_block_buffer_available()));
+        stream_write(",");
+        stream_write(uitoa(hal.stream.get_rx_buffer_free()));
+    }
+
+// +++ AGGIUNTA: Report current G-code command +++
+    if (state == STATE_CYCLE) {
+        plan_block_t *cur_block = plan_get_current_block();
+        if (cur_block != NULL) {
+            stream_write("|Cmd:");
+            
+            // Usa il tipo di movimento originale memorizzato
+            switch(cur_block->original_motion_mode) {
+                case MotionMode_Seek:
+                    stream_write("G0");
+                    break;
+                case MotionMode_Linear:
+                    stream_write("G1");
+                    break;
+                case MotionMode_CwArc:
+                    stream_write("G2");
+                    break;
+                case MotionMode_CcwArc:
+                    stream_write("G3");
+                    break;
+                case MotionMode_SpindleSynchronized:
+                    stream_write("G33");
+                    break;
+                case MotionMode_Threading:
+                    stream_write("G76");
+                    break;
+                case MotionMode_CubicSpline:
+                    stream_write("G5");
+                    break;
+                case MotionMode_QuadraticSpline:
+                    stream_write("G5.1");
+                    break;
+                case MotionMode_DrillChipBreak:
+                    stream_write("G73");
+                    break;
+                case MotionMode_CannedCycle81:
+                    stream_write("G81");
+                    break;
+                case MotionMode_CannedCycle82:
+                    stream_write("G82");
+                    break;
+                case MotionMode_CannedCycle83:
+                    stream_write("G83");
+                    break;
+                case MotionMode_CannedCycle84:
+                    stream_write("G84");
+                    break;
+                case MotionMode_CannedCycle85:
+                    stream_write("G85");
+                    break;
+                case MotionMode_CannedCycle86:
+                    stream_write("G86");
+                    break;
+                case MotionMode_CannedCycle89:
+                    stream_write("G89");
+                    break;
+                case MotionMode_ProbeToward:
+                case MotionMode_ProbeTowardNoError:
+                case MotionMode_ProbeAway:
+                case MotionMode_ProbeAwayNoError:
+                    stream_write("G38");
+                    break;
+                case MotionMode_None:
+                    stream_write("G80");
+                    break;
+                default:
+                    // Fallback al vecchio sistema per sicurezza
+                    if (cur_block->condition.rapid_motion) {
+                        stream_write("G0");
+                    } else if (cur_block->condition.jog_motion) {
+                        stream_write("$J=");
+                    } else {
+                        stream_write("G1");
+                    }
+                    break;
+            }
+        }
+    }
+// +++ FINE AGGIUNTA +++
+
+    // ... il resto del codice rimane invariato ...
+/*void report_realtime_status (stream_write_ptr stream_write)
+{
+    static bool probing = false;
+
+    uint_fast8_t idx;
+    float print_position[N_AXIS], wco[N_AXIS], dist_remaining[N_AXIS];
+    report_tracking_flags_t report = system_get_rt_report_flags(), delayed_report = {};
+    probe_state_t probe_state = {
+        .connected = On,
+        .triggered = Off
+    };
+
+    if(hal.probe.get_state)
+        probe_state = hal.probe.get_state();
+
+    // Report current machine state and sub-states
+    stream_write("<");
+
+    sys_state_t state = state_get();
+
+    switch (gc_state.tool_change && state == STATE_CYCLE ? STATE_TOOL_CHANGE : state) {
+
+        case STATE_IDLE:
+            stream_write("Idle");
+            break;
+
+        case STATE_CYCLE:
+            stream_write("Run");
+            if(sys.probing_state == Probing_Active && settings.status_report.run_substate)
+                probing = true;
+            else if (probing)
+                probing = probe_state.triggered;
+            if(sys.flags.feed_hold_pending)
+                stream_write(":1");
+            else if(probing)
+                stream_write(":2");
+            break;
+
+        case STATE_HOLD:
+            stream_write(appendbuf(2, "Hold:", uitoa((uint32_t)(sys.holding_state - 1))));
+            break;
+
+        case STATE_JOG:
+            stream_write("Jog");
+            break;
+
+        case STATE_HOMING:
+            stream_write("Home");
+            break;
+
+        case STATE_ESTOP:
+        case STATE_ALARM:
+            if((report.all || settings.status_report.alarm_substate) && sys.alarm)
+                stream_write(appendbuf(2, "Alarm:", uitoa((uint32_t)sys.alarm)));
+            else
+                stream_write("Alarm");
+            break;
+
+        case STATE_CHECK_MODE:
+            stream_write("Check");
+            break;
+
+        case STATE_SAFETY_DOOR:
+            stream_write(appendbuf(2, "Door:", uitoa((uint32_t)sys.parking_state)));
+            break;
+
+        case STATE_SLEEP:
+            stream_write("Sleep");
+            break;
+
+        case STATE_TOOL_CHANGE:
+            stream_write("Tool");
+            break;
+    }*/
+
+    system_convert_array_steps_to_mpos(print_position, sys.position);
+
+    if((report.distance_to_go = settings.status_report.distance_to_go)) {
+        // Calulate distance-to-go in current block (i.e., difference between target / end-of-block) and current position)
+        plan_block_t *cur_block = plan_get_current_block();
+        if((report.distance_to_go = !!cur_block)) {
+            for(idx = 0; idx < N_AXIS; idx++) {
+                dist_remaining[idx] = cur_block->target_mm[idx] - print_position[idx];
+            }
+        }
+    }
+
+    if(!settings.status_report.machine_position) {
+        // Apply work coordinate offsets and tool length offset to current position.
+        for(idx = 0; idx < N_AXIS; idx++) {
+            wco[idx] = gc_get_offset(idx, true);
+            print_position[idx] -= wco[idx];
+        }
+    }
+/*
+    // Report position
+    stream_write(settings.status_report.machine_position ? "|MPos:" : "|WPos:");
+    stream_write(get_axis_values(print_position));
+
     // Returns planner and output stream buffer states.
 
     if(settings.status_report.buffer_state) {
@@ -1254,7 +1463,7 @@ void report_realtime_status (stream_write_ptr stream_write)
         stream_write(",");
         stream_write(uitoa(hal.stream.get_rx_buffer_free()));
     }
-
+*/
     if(settings.status_report.line_numbers) {
         // Report current line number
         plan_block_t *cur_block = plan_get_current_block();

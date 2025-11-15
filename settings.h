@@ -645,7 +645,8 @@ typedef union {
                  run_substate       :1,
                  when_homing        :1,
                  distance_to_go     :1,
-                 unassigned         :2;
+                 gcode_command      :1,  // +++ AGGIUNTA: Mostra comando G-code nel report +++
+                 unassigned         :1;   // Riduci da 2 a 1
     };
 } reportmask_t;
 

@@ -165,6 +165,7 @@ PROGMEM const settings_t defaults = {
     .status_report.run_substate = DEFAULT_REPORT_RUN_SUBSTATE,
     .status_report.when_homing = DEFAULT_REPORT_WHEN_HOMING,
     .status_report.distance_to_go = DEFAULT_REPORT_DISTANCE_TO_GO,
+    .status_report.gcode_command = true, // Abilita report comando G-code di default
     .limits.flags.hard_enabled = DEFAULT_HARD_LIMIT_ENABLE,
     .limits.flags.jog_soft_limited = DEFAULT_JOG_LIMIT_ENABLE,
     .limits.flags.check_at_init = DEFAULT_CHECK_LIMITS_AT_INIT,

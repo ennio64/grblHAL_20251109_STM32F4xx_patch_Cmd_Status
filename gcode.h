@@ -719,4 +719,8 @@ bool gc_modal_state_restore (gc_modal_snapshot_t *snapshot);
 float gc_get_accel_factor (uint8_t profile);
 #endif
 
+// +++ AGGIUNTA: Prototipo per ottenere l'ultimo comando G-code +++
+motion_mode_t gc_get_current_command(void);
+// +++ FINE AGGIUNTA +++
+
 #endif // _GCODE_H_

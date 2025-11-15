@@ -66,6 +66,9 @@ void report_echo_line_received (char *line);
 // Prints realtime status report.
 void report_realtime_status (stream_write_ptr stream_write);
 
+// In report.h, aggiungi questa dichiarazione
+void report_set_current_gcode(const char *gcode);
+
 // Prints recorded probe position.
 void report_probe_parameters (void);
 

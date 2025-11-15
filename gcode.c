@@ -29,6 +29,9 @@
 #include "motion_control.h"
 #include "protocol.h"
 #include "state_machine.h"
+// +++ AGGIUNTA: Include per report_set_current_gcode +++
+#include "report.h"
+// +++ FINE AGGIUNTA +++
 
 #if NGC_PARAMETERS_ENABLE
 #include "ngc_params.h"
@@ -126,6 +129,10 @@ typedef union {
 DCRAM parser_state_t gc_state;
 
 #define FAIL(status) return(status);
+
+// +++ AGGIUNTA: Variabile globale per memorizzare l'ultimo comando G-code +++
+static motion_mode_t current_gcode_command = MotionMode_Seek; // Default G0
+// +++ FINE AGGIUNTA +++
 
 static output_command_t *output_commands = NULL; // Linked list
 static scale_factor_t scale_factor = {
@@ -1007,6 +1014,10 @@ status_code_t gc_execute_block (char *block)
 
     memset(&gc_block, 0, sizeof(gc_block));                                             // Initialize the parser block struct.
     memcpy(&gc_block.modal, &gc_state.modal, offsetof(gc_modal_t, tool_length_offset)); // Copy current modes
+
+    // +++ AGGIUNTA: Aggiorna SEMPRE il comando corrente all'inizio dell'esecuzione +++
+    current_gcode_command = gc_block.modal.motion;
+    // +++ FINE AGGIUNTA +++
 
     int32_t spindle_id = 0;
     bool set_tool = false, spindle_event = false;
@@ -2740,8 +2751,48 @@ status_code_t gc_execute_block (char *block)
     // Check remaining motion modes, if axis word are implicit (exist and not used by G10/28/30/92), or
     // was explicitly commanded in the g-code block.
     } else if (axis_command == AxisCommand_MotionMode) {
-
+                // +++ AGGIUNTA: Memorizza il comando corrente PRIMA dell'esecuzione +++
+        current_gcode_command = gc_block.modal.motion;
+        
+        // +++ DEBUG: Verifica che G2 venga rilevato +++
+        if (gc_block.modal.motion == MotionMode_CwArc) {
+            report_message("G2 DETECTED IN PARSER!", Message_Debug);
+        } else if (gc_block.modal.motion == MotionMode_CcwArc) {
+            report_message("G3 DETECTED IN PARSER!", Message_Debug);
+        }
+        // +++ FINE DEBUG +++
+        // +++ FINE AGGIUNTA +++
         gc_parser_flags.motion_mode_changed = gc_block.modal.motion != gc_state.modal.motion;
+
+        // +++ AGGIUNTA: Report current G-code command +++
+        if (gc_block.modal.motion != MotionMode_None) {
+            switch(gc_block.modal.motion) {
+                case MotionMode_Seek:          report_set_current_gcode("G0"); break;
+                case MotionMode_Linear:        report_set_current_gcode("G1"); break;
+                case MotionMode_CwArc:         report_set_current_gcode("G2"); break;
+                case MotionMode_CcwArc:        report_set_current_gcode("G3"); break;
+                case MotionMode_ProbeToward: 
+                case MotionMode_ProbeTowardNoError:
+                case MotionMode_ProbeAway:
+                case MotionMode_ProbeAwayNoError:
+                    report_set_current_gcode("G38"); break;
+#if GCODE_ADVANCED
+                case MotionMode_SpindleSynchronized: report_set_current_gcode("G33"); break;
+                case MotionMode_Threading:           report_set_current_gcode("G76"); break;
+                case MotionMode_CubicSpline:         report_set_current_gcode("G5"); break;
+                case MotionMode_QuadraticSpline:     report_set_current_gcode("G5.1"); break;
+                case MotionMode_CannedCycle81:       report_set_current_gcode("G81"); break;
+                case MotionMode_CannedCycle82:       report_set_current_gcode("G82"); break;
+                case MotionMode_CannedCycle83:       report_set_current_gcode("G83"); break;
+                case MotionMode_CannedCycle84:       report_set_current_gcode("G84"); break;
+                case MotionMode_CannedCycle85:       report_set_current_gcode("G85"); break;
+                case MotionMode_CannedCycle86:       report_set_current_gcode("G86"); break;
+                case MotionMode_CannedCycle89:       report_set_current_gcode("G89"); break;
+                case MotionMode_DrillChipBreak:      report_set_current_gcode("G73"); break;
+#endif
+                default: break;
+            }
+        }
 
         if (gc_block.modal.motion == MotionMode_Seek) {
             // [G0 Errors]: Axis letter not configured or without real value (done.)
@@ -2981,10 +3032,18 @@ status_code_t gc_execute_block (char *block)
                     break;
 
                 case MotionMode_CwArc:
+                // +++ DEBUG: Verifica esecuzione G2 +++
+                report_message("G2 DETECTED IN PARSER!", Message_Debug);
+                // +++ FINE DEBUG +++
                     gc_parser_flags.arc_is_clockwise = On;
                     // No break intentional.
 
                 case MotionMode_CcwArc:
+                // +++ DEBUG: Verifica esecuzione G3 +++
+                if (gc_block.modal.motion == MotionMode_CcwArc) {
+                    report_message("G3 DETECTED IN PARSER!", Message_Debug);
+                }
+                // +++ FINE DEBUG +++
                     // [G2/3 Errors All-Modes]: Feed rate undefined.
                     // [G2/3 Radius-Mode Errors]: No axis words in selected plane. Target point is same as current.
                     // [G2/3 Offset-Mode Errors]: No axis words and/or offsets in selected plane. The radius to the current
@@ -4150,6 +4209,9 @@ status_code_t gc_execute_block (char *block)
             // LinuxCNC's program end descriptions and testing. Only modal groups [G-code 1,2,3,5,7,12]
             // and [M-code 7,8,9] reset to [G1,G17,G90,G94,G40,G54,M5,M9,M48]. The remaining modal groups
             // [G-code 4,6,8,10,13,14,15] and [M-code 4,5,6] and the modal words [F,S,T,H] do not reset.
+    // +++ AGGIUNTA: Reset current G-code command +++
+    report_set_current_gcode("G0"); // Reset to default
+    // +++ FINE AGGIUNTA +++
 
             if(!check_mode && gc_block.modal.program_flow == ProgramFlow_CompletedM30 && hal.pallet_shuttle)
                 hal.pallet_shuttle();
@@ -4247,3 +4309,11 @@ status_code_t gc_execute_block (char *block)
 
     return Status_OK;
 }
+
+// +++ AGGIUNTA: Funzione per ottenere l'ultimo comando G-code eseguito +++
+motion_mode_t gc_get_current_command(void)
+{
+    return current_gcode_command;
+}
+// +++ FINE AGGIUNTA +++
+
